@@ -393,26 +393,26 @@ resource "aws_security_group" "bastion_sg" {
 
 #Provision RDS SQL Server
 resource "aws_db_instance" "sql_server" {
-  allocated_storage    = var.allocated_storage
-  storage_type         = "gp2"
-  engine               = "sqlserver-ex"
-  engine_version       = var.engine_version
-  instance_class       = var.instance_class
-  identifier           = "cds-dbs"
-  username             = "CDaup"
-  password             = "CDsDBs!$2024Z+"
-  db_subnet_group_name = aws_db_subnet_group.subnet_group.name
-  backup_retention_period  = var.backup_retention_period
-  backup_window = var.backup_window
-  skip_final_snapshot  = true
- tags = {
-name = "cds-dbs"
-}
+  allocated_storage       = var.allocated_storage
+  storage_type            = "gp2"
+  engine                  = "sqlserver-ex"
+  engine_version          = var.engine_version
+  instance_class          = var.instance_class
+  identifier              = "cds-dbs"
+  username                = "CDaup"
+  password                = "CDsDBs!$2024Z+"
+  db_subnet_group_name    = aws_db_subnet_group.subnet_group.name
+  backup_retention_period = var.backup_retention_period
+  backup_window           = var.backup_window
+  skip_final_snapshot     = true
+  tags = {
+    name = "cds-dbs"
+  }
 }
 
 resource "aws_db_subnet_group" "subnet_group" {
   name       = "my_database_subnet_group"
-  subnet_ids = ["subnet-abc12345"]
+  subnet_ids = [aws_subnet.hashi_private_subnet.id]
 
   tags = {
     Name = "My database subnet group"
@@ -422,14 +422,14 @@ resource "aws_db_subnet_group" "subnet_group" {
 resource "aws_instance" "windows_instance" {
   ami           = data.aws_ami.server_ami.id # Replace with the latest Windows AMI with SQL Server
   instance_type = "t2.micro"
-  subnet_id     = "subnet-abc12345"
+  subnet_id     = aws_subnet.hashi_private_subnet.id
 
   vpc_security_group_ids = [aws_security_group.sql_sg.id]
 }
 
 resource "aws_security_group" "sql_sg" {
   name = "allow_sql"
-  
+
   ingress {
     from_port   = 1433
     to_port     = 1433
@@ -443,11 +443,11 @@ resource "aws_security_group" "sql_sg" {
 }
 
 resource "aws_security_group_rule" "sql_rule" {
-  type              = "ingress"
-  from_port         = 1433
-  to_port           = 1433
-  protocol          = "tcp"
-  security_group_id = aws_security_group.sql_sg.id
+  type                     = "ingress"
+  from_port                = 1433
+  to_port                  = 1433
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.sql_sg.id
   source_security_group_id = aws_security_group.web_sg.id
 }
 
@@ -481,10 +481,10 @@ resource "aws_security_group" "web_sg" {
 
   # Egress rules
   egress {
-    from_port       = 0
-    to_port         = 0
-    protocol        = "-1"
-    cidr_blocks     = ["0.0.0.0/0"]
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   tags = {
