@@ -246,7 +246,7 @@ resource "aws_iam_role" "ssm_role" {
 
 # Attaching the SSM policy to the IAM role
 resource "aws_iam_role_policy_attachment" "ssm_attach" {
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedEC2InstanceDefaultPolicy"
   role       = aws_iam_role.ssm_role.name
 }
 
@@ -257,7 +257,7 @@ resource "aws_iam_instance_profile" "ssm_instance_profile" {
 }
 
 /**********************************************************
-# Creating an EC2 instance for the web server
+       Creating an EC2 instance for the web server
 **********************************************************/
 resource "aws_instance" "dev_node" {
   instance_type          = var.instance_type          # Change to your desired instance type
@@ -270,7 +270,7 @@ resource "aws_instance" "dev_node" {
 /**********************************************************/
 #Web Page user_data
 
-  user_data = <<-EOF
+user_data = <<-EOF
 <powershell>
 # Logging Function
 function Write-Log {
@@ -291,31 +291,57 @@ Write-Log "Web-Server feature installation completed."
 
 # Install SQL Server PowerShell module
 Write-Log "Installing SQL Server PowerShell module..."
-Install-Module -Name SqlServer -Force -AllowClobber
+Install-Module -Name SqlServer -Force -SkipPublisherCheck -AllowClobber
 Write-Log "SQL Server PowerShell module installation completed."
 
-# Get the RDS endpoint from the Terraform output
-$rds_endpoint = Invoke-RestMethod -Uri http://169.254.169.254/latest/user-data/rds_endpoint
+# Assuming that the RDS endpoint and other db related variables are set somewhere else in your Terraform setup
+# Replace the values below with your actual variables or method to retrieve these values
+$rds_endpoint = "your-rds-endpoint"
+$databaseName = "var.db_name"
+$databaseUsername = "var.db_username"
+$db_password = "var.db_password"
 
 # Set up database connection parameters
 $serverName = $rds_endpoint
-$databaseName = var.db_name
-$databaseUsername = var.db_username
-$db_password = var.db_password
-$cred = Get-Credential -UserName $databaseUsername -Password (ConvertTo-SecureString -String $db_password -AsPlainText -Force)
+$cred = New-Object System.Management.Automation.PSCredential ($databaseUsername, (ConvertTo-SecureString -String $db_password -AsPlainText -Force))
 
-# Create a table for storing data if it doesn't exist
-Write-Log "Creating a table for storing data..."
-Invoke-Sqlcmd -ServerInstance $serverName -Database $databaseName -Credential $cred -Query @"
-CREATE TABLE IF NOT EXISTS ThingstoSave (
-    ID INT IDENTITY(1,1) PRIMARY KEY,
-    Name NVARCHAR(255),
-    Description NVARCHAR(1000)
-)
+# Check if table exists, and create if not
+Write-Log "Checking and creating table if not exists..."
+$checkTableQuery = @"
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ThingstoSave')
+BEGIN
+    CREATE TABLE ThingstoSave (
+        ID INT IDENTITY(1,1) PRIMARY KEY,
+        Name NVARCHAR(255),
+        Description NVARCHAR(1000)
+    )
+END
 "@
-Write-Log "Table creation completed."
+Invoke-Sqlcmd -ServerInstance $serverName -Database $databaseName -Credential $cred -Query $checkTableQuery
+Write-Log "Table check and creation completed."
+
+# Fetch data from the database and generate HTML table rows
+Write-Log "Fetching data from database..."
+$sqlQuery = "SELECT * FROM ThingstoSave"
+$sqlConnection = New-Object System.Data.SqlClient.SqlConnection
+$sqlConnection.ConnectionString = "Server=$serverName;Database=$databaseName;User Id=$databaseUsername;Password=$db_password"
+$sqlConnection.Open()
+$sqlCommand = $sqlConnection.CreateCommand()
+$sqlCommand.CommandText = $sqlQuery
+$sqlDataReader = $sqlCommand.ExecuteReader()
+$tableRows = ""
+while ($sqlDataReader.Read()) {
+    $id = $sqlDataReader["ID"]
+    $name = $sqlDataReader["Name"]
+    $description = $sqlDataReader["Description"]
+    $tableRows += "<tr><td>$id</td><td>$name</td><td>$description</td></tr>`n"
+}
+$sqlDataReader.Close()
+$sqlConnection.Close()
+Write-Log "Data fetching completed."
 
 # Generate HTML content for the web app
+Write-Log "Generating HTML content..."
 $htmlContent = @"
 <!DOCTYPE html>
 <html lang="en">
@@ -360,27 +386,11 @@ $htmlContent = @"
                 </tr>
             </thead>
             <tbody>
-                # PowerShell script here to fetch and display data from the SQL database table
-                $sqlQuery = "SELECT * FROM YourTable"
-                $sqlConnection = New-Object System.Data.SqlClient.SqlConnection
-                $sqlConnection.ConnectionString = "Server=$serverName;Database=$databaseName;User Id=$databaseUsername;Password=$db_password"
-                $sqlConnection.Open()
-                $sqlCommand = $sqlConnection.CreateCommand()
-                $sqlCommand.CommandText = $sqlQuery
-                $sqlDataReader = $sqlCommand.ExecuteReader()
-
-                while ($sqlDataReader.Read()) {
-                    $id = $sqlDataReader["ID"]
-                    $name = $sqlDataReader["Name"]
-                    $description = $sqlDataReader["Description"]
-                    Write-Output "<tr><td>$id</td><td>$name</td><td>$description</td></tr>"
-                }
-
-                $sqlDataReader.Close()
-                $sqlConnection.Close()
+                $tableRows
             </tbody>
         </table>
         <h2>Add Data</h2>
+        <!-- Form submission is not handled in this script -->
         <form action="/add" method="post">
             <label for="name">Name:</label>
             <input type="text" id="name" name="name" required><br>
@@ -396,7 +406,7 @@ $htmlContent = @"
 Start-Service -Name W3SVC
 
 # Write the HTML content to the default IIS folder
-Write-Log "Generating the HTML content for the web app."
+Write-Log "Writing HTML content to the web server..."
 $htmlContent | Out-File -Encoding ASCII C:\inetpub\wwwroot\index.html
 Write-Log "HTML content written to C:\inetpub\wwwroot\index.html successfully."
 </powershell>
@@ -527,7 +537,7 @@ resource "aws_db_instance" "sql_server" {
   backup_retention_period = var.backup_retention_period
   backup_window           = var.backup_window
   skip_final_snapshot     = true
-  
+
   tags = {
     name = "cds-dbs"
   }
@@ -571,12 +581,12 @@ resource "aws_security_group" "web_sg" {
     cidr_blocks = ["0.0.0.0/0"] #correspond to the IP address ranges from which you want to allow traffic
   }
 
-    ingress {
+  ingress {
     from_port       = 1433 # SQL Server port
     to_port         = 1433
     protocol        = "tcp"
     security_groups = [aws_security_group.hashi_sql_sg.id] # Allow incoming traffic only from the web server's security group
-    }
+  }
 
   tags = {
     Name = "web_app_sg"
